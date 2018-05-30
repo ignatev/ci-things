@@ -33,7 +33,7 @@ pipeline {
                '-deststorepass changeit'
 
             sh 'cp ${SBT_CREDENTIALS} \$HOME/.ivy2/.my-credentials'
-            dir('spark-jobs/data-extraction-job-simple') {
+            dir('dir_name') {
               sh "SBT_OPTS='-Xms512m -Xmx2048m' sbt package"
             }
         }
@@ -63,7 +63,7 @@ pipeline {
               '-deststorepass changeit'
             sh 'echo nexusUsername=${NEXUS_USERNAME} >> gradle.properties'
             sh 'echo nexusPassword=${NEXUS_PASSWORD} >> gradle.properties'
-            sh "GRADLE_USER_HOME=/tmp/gradle-user-home gradle -Pci-build :azure-dispatcher-service:docker :job-processing:docker :job-rest-api:docker -x test --parallel"
+            sh "GRADLE_USER_HOME=/tmp/gradle-user-home gradle -Pci-build :azure-service:docker :job-processing:docker :job-rest-api:docker -x test --parallel"
         }
         script {
           PROJECT_VERSION = sh (
@@ -80,10 +80,10 @@ pipeline {
       steps {
         sh "echo $PROJECT_VERSION"
         script {
-          docker.withRegistry('https://aksregistryprod.azurecr.io', 'aksregistryprod') {
-            docker.image("aksregistryprod.azurecr.io/com.honeywell.tdp.sak/job-rest-api:$PROJECT_VERSION").push()
-            docker.image("aksregistryprod.azurecr.io/com.honeywell.tdp.sak/job-processing:$PROJECT_VERSION").push()
-            docker.image("aksregistryprod.azurecr.io/com.honeywell.tdp.sak/azure-dispatcher-service:$PROJECT_VERSION").push()
+          docker.withRegistry('https://registryname', 'sercret_name') {
+            docker.image("registryname/job-rest-api:$PROJECT_VERSION").push()
+            docker.image("registryname/job-processing:$PROJECT_VERSION").push()
+            docker.image("registryname/azure-dispatcher-service:$PROJECT_VERSION").push()
           }
         }
       }
@@ -97,13 +97,13 @@ pipeline {
         }
       }
       steps {
-        withCredentials([ string(credentialsId: 'sak-spark-aas-namespace-jenkins-service-account', variable: 'TOKEN') ]) {
+        withCredentials([ string(credentialsId: 'temp-namespace-jenkins-service-account', variable: 'TOKEN') ]) {
           sh 'kubectl config set-context dev --cluster=dev --user=jenkins --namespace=sak-spark-aas'
           sh 'kubectl config use-context dev'
           sh 'kubectl config set-credentials jenkins --token=$TOKEN'
-          sh 'kubectl config set-cluster dev --server=https://lca-dl-dev-akscluster-5524278f.hcp.eastus.azmk8s.io --insecure-skip-tls-verify=true'
-          sh 'kubectl auth can-i create deployments --namespace sak-spark-aas'
-          sh 'kubectl auth can-i create deployments --namespace sasnouskikh'
+          sh 'kubectl config set-cluster dev --server=https://cluster-name.hcp.eastus.azmk8s.io --insecure-skip-tls-verify=true'
+          sh 'kubectl auth can-i create deployments --namespace staging'
+          sh 'kubectl auth can-i create deployments --namespace dev'
         }
       }
     }

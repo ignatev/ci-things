@@ -1,0 +1,86 @@
+pipeline {
+  agent any
+  environment {
+    CI_SERVER_JENKINS = true
+  }
+
+  parameters {
+    string(name: 'DOCKER_REGISTRY', defaultValue: '172.29.23.100:5000', description: 'Private docker registry')
+    string(name: 'DOCKER_HOST', defaultValue: '172.29.23.146:2375', description: 'Docker host')
+    string(name: 'FLUENTD_HOST', defaultValue: '172.29.23.147', description: 'Fluentd host')
+    string(name: 'FLUENTD_PORT', defaultValue: '24224', description: 'Fluentd port')
+    string(name: 'CONTAINER_MARKER', defaultValue: 'dev', description: 'Kibana log filter')
+    string(name: 'GLUSTER_VOLUME', defaultValue: '/data/service/dev', description: 'Path to glusterfs volume')
+    string(name: 'TAG', defaultValue: 'latest', description: 'git tag')
+    choice(
+      choices: '\nqa\nqadb',
+      description: 'Spring profile',
+      name: 'SPRING_PROFILE'
+    )
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '2'))
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Fallback') {
+      environment {
+        DOCKER_HOST = "${DOCKER_HOST}"
+      }
+      steps {
+        sh "docker rm service-rollback || echo 'there is no previous version'"
+        sh "docker rename service service-rollback || echo 'lol'"
+        sh "docker stop service-rollback || echo 'kek'"
+
+      }
+    }
+
+    stage('Deploy') {
+      environment {
+        DOCKER_HOST = "${DOCKER_HOST}"
+      }
+      steps {
+        sh "docker-compose -f pipelines/docker-compose.yml pull"
+        sh "docker-compose -f pipelines/docker-compose.yml up -d --no-deps --build --force-recreate"
+        script {
+          timeout(time: 120, unit: 'SECONDS'){
+            try {
+              waitUntil {
+                  sh 'sleep 2'
+                  def r = sh script: "docker inspect --format='{{json .State.Health.Status}}' service | grep \"healthy\"", returnStatus: true
+                  return (r == 0)
+                } 
+              } catch (error) {
+                "deploy failed, application isn't responding"
+                throw error
+              }
+          }
+        }
+      }
+      post {
+        failure {
+          build job: 'rollback', parameters: [[$class: 'StringParameterValue', name: 'DOCKER_HOST', value: '172.29.23.146:2375'], ]
+        }
+      }
+    }
+  }
+
+  post {
+    success {echo 'lol'}
+          failure {
+            slackSend(color: '#FF0000', message: "FAILED: Job ${env.JOB_NAME} [${env.BUILD_NUMBER}] (${env.BUILD_URL})", channel: '@ignatev', tokenCredentialId: 'slack-channel')
+          }
+          always {
+            sh "docker system prune -f"
+          }
+        }
+      }

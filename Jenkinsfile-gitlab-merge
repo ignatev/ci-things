@@ -1,0 +1,69 @@
+pipeline {
+    agent {
+        label {
+            label "label"
+        }
+    }
+
+    parameters {
+        choice(
+                choices: '\n--debug',
+                description: 'Use this option for enable gradle build --debug',
+                name: 'DEBUG_BUILD'
+        )
+    }
+
+    triggers {
+        gitlab(triggerOnPush: false, triggerOnMergeRequest: true, branchFilterType: 'All', triggerOnNoteRequest: true, noteRegex: 'rebuild')
+    }
+
+    options {
+        timestamps()
+        gitLabConnection('gitlab')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr:'5'))
+    }
+
+    tools {
+        gradle 'Gradle'
+    }
+
+    stages {
+        stage ('Merge into master') {
+            steps {
+                updateGitlabCommitStatus name: 'Jenkins build', state: 'running'
+                checkout([$class: 'GitSCM',
+                          branches: [[name: "origin/${env.gitlabSourceBranch}"]],
+                          doGenerateSubmoduleConfigurations: false,
+                          extensions: [[$class: 'UserIdentity', email: 'jenkins', name: 'jenkins'], [$class: 'PreBuildMerge', options: [fastForwardMode: 'NO_FF', mergeRemote: 'origin', mergeStrategy: 'default', mergeTarget: "${env.gitlabTargetBranch}"]]],
+                          submoduleCfg: [],
+                          userRemoteConfigs: [[credentialsId: 'git-creds', name: 'origin', url: 'ssh://git-repo']]
+                ])
+            }
+        }
+
+        stage('Gradle build') {
+            steps{
+                sh "gradle clean build integrationTest sonarqube -Dsonar.host.url=${SONAR_HOST} --info --parallel -Penv=production ${DEBUG_BUILD}"
+            }
+        }
+    }
+
+    post {
+        success {
+            updateGitlabCommitStatus name: 'Jenkins build', state: 'success'
+            emailext(
+                    subject: "${env.gitlabMergeRequestTitle} ready for code-review",
+                    body: """
+                        <p>
+                        '${env.gitlabMergeRequestDescription}'
+                        </p>    
+                        """,
+                    to: 'ignatev'
+            )
+        }
+        failure {
+            updateGitlabCommitStatus name: 'Jenkins build', state: 'failed'
+        }
+    }
+}
